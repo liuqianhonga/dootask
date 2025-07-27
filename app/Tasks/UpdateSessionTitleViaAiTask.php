@@ -3,14 +3,17 @@
 namespace App\Tasks;
 
 use App\Models\WebSocketDialogSession;
+use App\Module\AI;
 use App\Module\Base;
-use App\Module\Extranet;
 
 /**
  * 通过AI接口更新对话标题
  */
 class UpdateSessionTitleViaAiTask extends AbstractTask
 {
+    protected $sessionId;
+    protected $msgText;
+
     public function __construct($sessionId, $msgText)
     {
         parent::__construct();
@@ -29,12 +32,12 @@ class UpdateSessionTitleViaAiTask extends AbstractTask
             return;
         }
 
-        $res = Extranet::openAIGenerateTitle($this->msgText);
-        if (Base::isError($res)) {
+        $result = AI::generateTitle($this->msgText);
+        if (Base::isError($result)) {
             return;
         }
 
-        $newTitle = $res['data'];
+        $newTitle = $result['data']['title'];
         if ($newTitle && $newTitle != $session->title) {
             $session->title = Base::cutStr($newTitle, 100);
             $session->save();

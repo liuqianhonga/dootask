@@ -7,6 +7,7 @@ use Request;
 use Redirect;
 use Carbon\Carbon;
 use App\Tasks\PushTask;
+use App\Module\AI;
 use App\Module\Doo;
 use App\Models\File;
 use App\Models\User;
@@ -328,8 +329,6 @@ class DialogController extends AbstractController
             'top_at' => $dialogUser->top_at?->toDateTimeString(),
         ]);
     }
-
-
 
     /**
      * @api {get} api/dialog/hide          09. 会话隐藏
@@ -1357,22 +1356,23 @@ class DialogController extends AbstractController
                 'prompt' => "将此语音识别为“" . Doo::getLanguages($language) . "”。",
             ];
         }
-        $result = Extranet::openAItranscriptions($recordData['file'], $extParams);
+        $result = AI::transcriptions($recordData['file'], $extParams);
         if (Base::isError($result)) {
             return $result;
         }
-        if (strlen($result['data']) < 1) {
+        if (strlen($result['data']['text']) < 1) {
             return Base::retError('转文字失败');
         }
-        // 翻译
-        if ($translate) {
-            $result = Extranet::openAItranslations($result['data'], Doo::getLanguages($translate));
-            if (Base::isError($result)) {
-                return $result;
-            }
+        // 不翻译
+        if (!$translate) {
+            return Base::retSuccess('success', $result['data']['text']);
         }
-        // 返回
-        return $result;
+        // 需要翻译
+        $result = AI::translations($result['data']['text'], Doo::getLanguages($translate));
+        if (Base::isError($result)) {
+            return $result;
+        }
+        return Base::retSuccess('success', $result['data']['translated_text']);
     }
 
     /**
@@ -1599,7 +1599,89 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/msg/sendlocation          31. 发送位置消息
+     * @api {post} api/dialog/msg/sendbot          31. 发送机器人消息
+     *
+     * @apiDescription 需要token身份，通过机器人发送消息给指定用户
+     * @apiVersion 1.0.0
+     * @apiGroup dialog
+     * @apiName msg__sendbot
+     *
+     * @apiParam {Number} userid            对方会员ID
+     * @apiParam {String} text              消息内容，markdown格式
+     * @apiParam {String} [bot_type]        机器人类型
+     * - system-msg: 系统消息（默认）
+     * - task-alert: 任务提醒
+     * - check-in: 签到打卡
+     * - approval-alert: 审批
+     * - meeting-alert: 会议通知
+     * - xxxxxx: 其他机器人，xxxxxx 是任意6-20个字符串（如果不存在，则自动创建）
+     * @apiParam {String} [bot_name]        机器人名称（bot_type 为 xxxxxx 时有效）
+     * @apiParam {Boolean} [silence]        静默发送
+     *
+     * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
+     * @apiSuccess {String} msg     返回信息（错误描述）
+     * @apiSuccess {Object} data    返回数据
+     */
+    public function msg__sendbot()
+    {
+        $user = User::auth();
+        //
+        $userid = intval(Request::input('userid'));
+        $text = trim(Request::input('text'));
+        $botType = trim(Request::input('bot_type', 'system-msg'));
+        $botName = trim(Request::input('bot_name'));
+        $silence = Request::input('silence', false);
+        //
+        $toUser = User::whereUserid($userid)->first();
+        if (empty($toUser) || $toUser->bot) {
+            return Base::retError("机器人消息仅允许发送给个人");
+        }
+        if ($toUser->isDisable()) {
+            return Base::retError("对方已离职");
+        }
+        $strlen = mb_strlen($text);
+        if ($strlen < 1) {
+            return Base::retError('消息内容不能为空');
+        }
+        if ($strlen > 2000) {
+            return Base::retError('消息内容最大不能超过2000字');
+        }
+        //
+        $botUpdate = [];
+        if (!in_array($botType, [
+            'system-msg',
+            'task-alert',
+            'check-in',
+            'approval-alert',
+            'meeting-alert',
+            'bot-manager',
+        ])) {
+            if (strlen($botType) < 6 || strlen($botType) > 20) {
+                return Base::retError("机器人类型由6-20个字符组成。");
+            }
+            if ($botName && (strlen($botName) < 2 || strlen($botName) > 20)) {
+                return Base::retError("机器人名称由2-20个字符组成。");
+            }
+            $botType = 'user-auto-' . $botType;
+            $botUpdate['nickname'] = $botName;
+        }
+        $botUser = User::botGetOrCreate($botType, $botUpdate, $user->userid);
+        if (empty($botUser)) {
+            return Base::retError('机器人不存在');
+        }
+        $dialog = WebSocketDialog::checkUserDialog($botUser, $toUser->userid);
+        if (empty($dialog)) {
+            return Base::retError('机器人会话不存在');
+        }
+        $msgData = [
+            'type' => 'md',
+            'text' => $text,
+        ];
+        return WebSocketDialogMsg::sendMsg(null, $dialog->id, 'text', $msgData, $botUser->userid, false, false, $silence);
+    }
+
+    /**
+     * @api {post} api/dialog/msg/sendlocation          32. 发送位置消息
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1659,7 +1741,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/readlist          32. 获取消息阅读情况
+     * @api {get} api/dialog/msg/readlist          33. 获取消息阅读情况
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1688,7 +1770,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/detail          33. 消息详情
+     * @api {get} api/dialog/msg/detail          34. 消息详情
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1748,7 +1830,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/download          34. 文件下载
+     * @api {get} api/dialog/msg/download          35. 文件下载
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1789,7 +1871,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/withdraw          35. 聊天消息撤回
+     * @api {get} api/dialog/msg/withdraw          36. 聊天消息撤回
      *
      * @apiDescription 消息撤回限制24小时内，需要token身份
      * @apiVersion 1.0.0
@@ -1820,7 +1902,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/voice2text          36. 语音消息转文字
+     * @api {get} api/dialog/msg/voice2text          37. 语音消息转文字
      *
      * @apiDescription 将语音消息转文字，需要token身份
      * @apiVersion 1.0.0
@@ -1859,20 +1941,23 @@ class DialogController extends AbstractController
         }
         WebSocketDialog::checkDialog($msg->dialog_id);
         //
-        $res = Extranet::openAItranscriptions(public_path($msgData['path']));
-        if (Base::isError($res)) {
-            return $res;
+        $result = AI::transcriptions(public_path($msgData['path']));
+        if (Base::isError($result)) {
+            return $result;
         }
         //
         $msg->updateInstance([
-            'msg' => array_merge($msgData, ['text' => $res['data'], 'text_userid' => [$user->userid]]),
+            'msg' => array_merge($msgData, [
+                'text' => $result['data']['text'],
+                'text_userid' => [$user->userid]
+            ]),
         ]);
         $msg->save();
         return Base::retSuccess("success", $msg);
     }
 
     /**
-     * @api {get} api/dialog/msg/translation          37. 翻译消息
+     * @api {get} api/dialog/msg/translation          38. 翻译消息
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1925,15 +2010,15 @@ class DialogController extends AbstractController
         if ($msg->type === 'text' && $msgData['type'] === 'md') {
             $msgData['text'] = preg_replace('/:::\s*reasoning.*?:::/s', '', $msgData['text']);
         }
-        $res = Extranet::openAItranslations($msgData['text'], $targetLanguage);
-        if (Base::isError($res)) {
-            return $res;
+        $result = AI::translations($msgData['text'], $targetLanguage, $force);
+        if (Base::isError($result)) {
+            return $result;
         }
         $row = WebSocketDialogMsgTranslate::createInstance([
             'dialog_id' => $msg->dialog_id,
             'msg_id' => $msg_id,
             'language' => $language,
-            'content' => $res['data'],
+            'content' => $result['data']['translated_text'],
         ]);
         $row->save();
         //
@@ -1941,7 +2026,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/mark          38. 消息标记操作
+     * @api {get} api/dialog/msg/mark          39. 消息标记操作
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2005,7 +2090,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/silence          39. 消息免打扰
+     * @api {get} api/dialog/msg/silence          40. 消息免打扰
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2068,7 +2153,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/forward          40. 转发消息给
+     * @api {get} api/dialog/msg/forward          41. 转发消息给
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2109,7 +2194,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/emoji          41. emoji回复
+     * @api {get} api/dialog/msg/emoji          42. emoji回复
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2130,7 +2215,22 @@ class DialogController extends AbstractController
         $msg_id = intval(Request::input("msg_id"));
         $symbol = Request::input("symbol");
         //
-        if (!preg_match('/[\x{1F300}-\x{1F9FF}]|[\x{1F000}-\x{1F02F}]|[\x{1F0A0}-\x{1F0FF}]|[\x{1F100}-\x{1F64F}]|[\x{1F680}-\x{1F6FF}]|[\x{2600}-\x{26FF}]|[\x{2700}-\x{27BF}]/u', $symbol)) {
+        $emojiPattern = '/(?:' .
+            '[\x{1F600}-\x{1F64F}]|' .          // 表情符号
+            '[\x{1F300}-\x{1F5FF}]|' .          // 符号和象形文字
+            '[\x{1F680}-\x{1F6FF}]|' .          // 交通和地图符号
+            '[\x{1F1E0}-\x{1F1FF}]|' .          // 区域指示符号（国旗）
+            '[\x{2600}-\x{26FF}]|' .            // 杂项符号
+            '[\x{2700}-\x{27BF}]|' .            // 装饰符号
+            '[\x{1F900}-\x{1F9FF}]|' .          // 补充符号和象形文字
+            '[\x{1F000}-\x{1F02F}]|' .          // 麻将牌
+            '[\x{1F0A0}-\x{1F0FF}]|' .          // 扑克牌
+            '[\x{1F100}-\x{1F64F}]|' .          // 封闭字母数字补充
+            '[\x{FE0F}]|' .                     // 变体选择器-16
+            '[\x{20E3}]|' .                     // 组合封闭键帽
+            '[\x{30}-\x{39}\x{23}\x{2A}][\x{FE0F}]?[\x{20E3}]' . // 键帽序列 (0-9, #, *)
+        ')/u';
+        if (!preg_match($emojiPattern, $symbol)) {
             return Base::retError("参数错误");
         }
         //
@@ -2144,7 +2244,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/tag          42. 标注/取消标注
+     * @api {get} api/dialog/msg/tag          43. 标注/取消标注
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2173,7 +2273,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/todo          43. 设待办/取消待办
+     * @api {get} api/dialog/msg/todo          44. 设待办/取消待办
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2216,7 +2316,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/todolist          44. 获取消息待办情况
+     * @api {get} api/dialog/msg/todolist          45. 获取消息待办情况
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2246,7 +2346,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/done          45. 完成待办
+     * @api {get} api/dialog/msg/done          46. 完成待办
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2299,7 +2399,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/color          46. 设置颜色
+     * @api {get} api/dialog/msg/color          47. 设置颜色
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2340,7 +2440,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/add          47. 新增群组
+     * @api {get} api/dialog/group/add          48. 新增群组
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2402,7 +2502,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/edit          48. 修改群组
+     * @api {get} api/dialog/group/edit          49. 修改群组
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2464,7 +2564,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/adduser          49. 添加群成员
+     * @api {get} api/dialog/group/adduser          50. 添加群成员
      *
      * @apiDescription  需要token身份
      * - 有群主时：只有群主可以邀请
@@ -2500,7 +2600,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/deluser          50. 移出（退出）群成员
+     * @api {get} api/dialog/group/deluser          51. 移出（退出）群成员
      *
      * @apiDescription  需要token身份
      * - 只有群主、邀请人可以踢人
@@ -2544,7 +2644,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/transfer          51. 转让群组
+     * @api {get} api/dialog/group/transfer          52. 转让群组
      *
      * @apiDescription  需要token身份
      * - 只有群主且是个人类型群可以解散
@@ -2593,7 +2693,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/disband          52. 解散群组
+     * @api {get} api/dialog/group/disband          53. 解散群组
      *
      * @apiDescription  需要token身份
      * - 只有群主且是个人类型群可以解散
@@ -2621,7 +2721,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/group/searchuser          53. 搜索个人群（仅限管理员）
+     * @api {get} api/dialog/group/searchuser          54. 搜索个人群（仅限管理员）
      *
      * @apiDescription  需要token身份，用于创建部门搜索个人群组
      * @apiVersion 1.0.0
@@ -2650,7 +2750,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/okr/add          54. 创建OKR评论会话
+     * @api {post} api/dialog/okr/add          55. 创建OKR评论会话
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2689,7 +2789,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/okr/push          55. 推送OKR相关信息
+     * @api {post} api/dialog/okr/push          56. 推送OKR相关信息
      *
      * @apiDescription  需要token身份
      * @apiVersion 1.0.0
@@ -2725,7 +2825,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/msg/wordchain          56. 发送接龙消息
+     * @api {post} api/dialog/msg/wordchain          57. 发送接龙消息
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2811,7 +2911,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/msg/vote          57. 发起投票
+     * @api {post} api/dialog/msg/vote          58. 发起投票
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2927,7 +3027,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/top          58. 置顶/取消置顶
+     * @api {get} api/dialog/msg/top          59. 置顶/取消置顶
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -2987,7 +3087,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/topinfo          59. 获取置顶消息
+     * @api {get} api/dialog/msg/topinfo          60. 获取置顶消息
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3014,7 +3114,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/msg/applied          60. 标记消息已应用
+     * @api {get} api/dialog/msg/applied          61. 标记消息已应用
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3063,7 +3163,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/sticker/search          61. 搜索在线表情
+     * @api {get} api/dialog/sticker/search          62. 搜索在线表情
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3087,7 +3187,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/config          62. 获取会话配置
+     * @api {get} api/dialog/config          63. 获取会话配置
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3123,7 +3223,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {post} api/dialog/config/save          63. 保存会话配置
+     * @api {post} api/dialog/config/save          64. 保存会话配置
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3169,7 +3269,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/session/create          64. AI-开启新会话
+     * @api {get} api/dialog/session/create          65. AI-开启新会话
      *
      * @apiDescription 需要token身份，仅限与AI用户会话
      * @apiVersion 1.0.0
@@ -3196,15 +3296,7 @@ class DialogController extends AbstractController
             $dialog = WebSocketDialog::checkDialog($dialog_id);
         }
         //
-        if ($dialog->type != 'user') {
-            return Base::retError('当前对话不支持');
-        }
-        //
-        $hasAiUser = WebSocketDialogUser::join('users as u', 'web_socket_dialog_users.userid', '=', 'u.userid')
-            ->where('dialog_id', $dialog->id)
-            ->where('u.email', 'like', 'ai-%@bot.system')
-            ->exists();
-        if (!$hasAiUser) {
+        if (!$dialog->isSessionDialog()) {
             return Base::retError('当前对话不支持');
         }
         //
@@ -3217,8 +3309,6 @@ class DialogController extends AbstractController
         //
         $session = WebSocketDialogSession::create([
             'dialog_id' => $dialog->id,
-            'status' => 1,
-            'title' => '',
         ]);
         $session->save();
         $dialog->session_id = $session->id;
@@ -3228,7 +3318,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/session/list          65. AI-获取会话列表
+     * @api {get} api/dialog/session/list          66. AI-获取会话列表
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -3268,7 +3358,7 @@ class DialogController extends AbstractController
     }
 
     /**
-     * @api {get} api/dialog/session/open          66. AI-打开会话
+     * @api {get} api/dialog/session/open          67. AI-打开会话
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0

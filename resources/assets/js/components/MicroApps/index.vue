@@ -1,7 +1,7 @@
 <template>
     <div>
         <MicroModal
-            v-for="(app, key) in apps"
+            v-for="(app, key) in microApps"
             :key="key"
             v-model="app.isOpen"
             :ref="`ref-${app.name}`"
@@ -9,12 +9,15 @@
             :background="app.background"
             :transparent="app.transparent"
             :autoDarkTheme="app.auto_dark_theme"
-            :beforeClose="async () => { await onBeforeClose(app.name) }">
+            :keepAlive="app.keep_alive"
+            :beforeClose="async (isClick) => { await onBeforeClose(app.name, isClick) }"
+            @on-popout-window="onPopoutWindow(app.name)">
             <MicroIFrame
-                v-if="app.url_type === 'iframe' && app.isOpen && app.url"
+                v-if="shouldRenderIFrame(app)"
                 :name="app.name"
                 :url="app.url"
                 :data="appData(app.name)"
+                :immersive="app.iframe_immersive"
                 @mounted="mounted"
                 @error="error"/>
             <micro-app
@@ -107,13 +110,16 @@ export default {
 
     data() {
         return {
-            apps: [],
             assistShow: false,
             userSelectOptions: {value: [], config: {}},
         }
     },
 
     created() {
+        // 卸载所有微应用（防止刷新导致的缓存）
+        microApp.unmountAllApps({destroy: true})
+
+        // 初始化微应用
         microApp.start({
             'iframe': true,
             'router-mode': 'state',
@@ -122,11 +128,13 @@ export default {
     },
 
     mounted() {
-        emitter.on('observeMicroApp:open', this.observeMicroApp);
+        emitter.on('observeMicroApp:open', this.onOpen);
+        emitter.on('observeMicroApp:updatedOrUninstalled', this.onUpdatedOrUninstalled);
     },
 
     beforeDestroy() {
-        emitter.off('observeMicroApp:open', this.observeMicroApp);
+        emitter.off('observeMicroApp:open', this.onOpen);
+        emitter.off('observeMicroApp:updatedOrUninstalled', this.onUpdatedOrUninstalled);
     },
 
     watch: {
@@ -134,14 +142,14 @@ export default {
             if (token) {
                 return
             }
-            this.closeAllMicroApp()
+            this.unmountAllMicroApp()
         },
         themeName() {
-            this.closeAllMicroApp()
+            this.unmountAllMicroApp()
         },
-        apps: {
-            handler(apps) {
-                this.assistShow = !!apps.find(item => item.isOpen)
+        microApps: {
+            handler(items) {
+                this.assistShow = !!items.find(item => item.isOpen)
             },
             deep: true,
         }
@@ -151,6 +159,8 @@ export default {
         ...mapState([
             'userInfo',
             'themeName',
+            'microApps',
+            'safeAreaSize',
         ]),
     },
 
@@ -175,10 +185,7 @@ export default {
 
         // 加载结束
         finish(name) {
-            const app = this.apps.find(app => app.name == name);
-            if (app) {
-                app.isLoading = false
-            }
+            this.$store.commit('microApps/update', {name, data: {isLoading: false}})
         },
 
         /**
@@ -187,7 +194,7 @@ export default {
          * @returns {*}
          */
         appData(name) {
-            const app = this.apps.find(item => item.name == name);
+            const app = this.microApps.find(item => item.name == name);
             if (!app) {
                 return {};
             }
@@ -228,6 +235,7 @@ export default {
                     languageList,
                     languageName,
                     themeName: this.themeName,
+                    safeArea: this.safeAreaSize,
                 },
 
                 methods: {
@@ -238,12 +246,7 @@ export default {
                         this.closeByName(name)
                     },
                     popoutWindow: async (windowConfig = null) => {
-                        const app = this.apps.find(item => item.name == name);
-                        if (!app) {
-                            $A.modalError("应用不存在");
-                            return
-                        }
-                        await this.inlineBlank(app, windowConfig)
+                        await this.onPopoutWindow(name, windowConfig)
                     },
                     openWindow: (params) => {
                         if (!$A.isJson(params)) {
@@ -272,14 +275,14 @@ export default {
                             },
                         });
                     },
-                    requestAPI: async(params) => {
+                    requestAPI: async (params) => {
                         return await store.dispatch('call', params);
                     },
                     selectUsers: async (params) => {
                         if (!$A.isJson(params)) {
                             params = {value: params}
                         }
-                        if ($A.isArray(params.value)) {
+                        if (!$A.isArray(params.value)) {
                             params.value = params.value ? [params.value] : []
                         }
                         this.userSelectOptions.value = params.value
@@ -297,6 +300,9 @@ export default {
                         }
                         return 1000;
                     },
+                    isFullScreen: () => {
+                        return window.innerWidth < 768 || this.windowType === 'popout'
+                    },
                     extraCallA: (...args) => {
                         if (args.length > 0 && typeof args[0] === 'string') {
                             const methodName = args[0];
@@ -304,6 +310,14 @@ export default {
                             if (typeof $A[methodName] === 'function') {
                                 return $A[methodName](...methodParams);
                             }
+                        }
+                        return null;
+                    },
+                    extraCallStore: async (...args) => {
+                        if (args.length > 0 && typeof args[0] === 'string') {
+                            const actionName = args[0];
+                            const payload = args.slice(1);
+                            await this.$store.dispatch(actionName, ...payload)
                         }
                         return null;
                     },
@@ -315,8 +329,8 @@ export default {
          * 观察打开微应用
          * @param config
          */
-        async observeMicroApp(config) {
-            if (config.url_type === 'inline_blank') {
+        async onOpen(config) {
+            if (/_blank$/i.test(config.url_type)) {
                 await this.inlineBlank(config)
                 return
             }
@@ -325,21 +339,36 @@ export default {
                 return
             }
 
-            const app = this.apps.find(({name}) => name == config.name);
+            const app = this.microApps.find(({name}) => name == config.name);
             if (app) {
+                // 恢复 keep_alive
+                if (app.keepAliveBackup !== undefined) {
+                    app.keep_alive = app.keepAliveBackup
+                    delete app.keepAliveBackup
+                }
+
                 // 更新微应用
                 if (app.url != config.url) {
-                    await microApp.unmountApp(app.name, {destroy: true})
+                    this.unmountMicroApp(app)
                     app.isLoading = true
                 }
                 Object.assign(app, config)
-                requestAnimationFrame(_ => app.isOpen = true)
+                requestAnimationFrame(_ => {
+                    app.isOpen = true
+                    app.lastOpenAt = Date.now()
+                    this.$store.commit('microApps/keepAlive', 3)
+                })
             } else {
                 // 新建微应用
                 config.isLoading = true
                 config.isOpen = false
-                this.apps.push(config)
-                requestAnimationFrame(_ => config.isOpen = true)
+                config.onBeforeClose = () => true
+                this.$store.commit('microApps/push', config)
+                requestAnimationFrame(_ => {
+                    config.isOpen = true
+                    config.lastOpenAt = Date.now()
+                    this.$store.commit('microApps/keepAlive', 3)
+                })
             }
         },
 
@@ -352,8 +381,8 @@ export default {
         async inlineBlank(config, windowConfig = null) {
             const appConfig = {
                 ...config,
-                
-                url_type: config.url_type === 'iframe' ? 'iframe' : 'inline',
+
+                url_type: config.url_type.replace(/_blank$/, ''),
                 transparent: true,
                 keep_alive: false,
             };
@@ -366,7 +395,7 @@ export default {
             const apps = (await $A.IDBArray("cacheMicroApps")).filter(item => item.name != appConfig.name);
             apps.length > 50 && apps.splice(0, 10)
             apps.push(appConfig)
-            await $A.IDBSet("cacheMicroApps", apps);
+            await $A.IDBSet("cacheMicroApps", $A.cloneJSON(apps));
 
             if (this.$Electron) {
                 await this.$store.dispatch('openChildWindow', {
@@ -444,47 +473,85 @@ export default {
          * @param destroy
          */
         closeMicroApp(name, destroy) {
-            const app = this.apps.find(item => item.name == name);
+            const app = this.microApps.find(item => item.name == name);
             if (!app) {
                 return;
             }
 
             app.isOpen = false
             if (destroy) {
-                microApp.unmountApp(app.name, {destroy: true})
+                this.unmountMicroApp(app)
             }
         },
 
         /**
-         * 关闭所有微应用
-         * @param destroy
+         * 卸载所有微应用
          */
-        closeAllMicroApp(destroy = true) {
-            this.apps.forEach(app => {
+        unmountAllMicroApp() {
+            this.microApps.forEach(app => {
                 app.isOpen = false
-                if (destroy) {
-                    microApp.unmountApp(app.name, {destroy: true})
-                }
+                this.unmountMicroApp(app)
             });
+        },
+
+        /**
+         * 卸载微应用
+         * @param app
+         */
+        unmountMicroApp(app) {
+            if (app.keep_alive) {
+                app.keepAliveBackup = true
+                app.keep_alive = false
+            }
+            microApp.unmountApp(app.name, {destroy: true})
         },
 
         /**
          * 关闭之前判断
          * @param name
+         * @param {boolean} isClick 是否是点击关闭
          * @returns {Promise<unknown>}
          */
-        onBeforeClose(name) {
+        onBeforeClose(name, isClick = false) {
             return new Promise(resolve => {
+                const onClose = () => {
+                    if ($A.isSubElectron) {
+                        $A.Electron.sendMessage('windowDestroy');
+                    } else {
+                        resolve()
+                    }
+                }
+
+                const app = this.microApps.find(item => item.name == name);
+                if (!app) {
+                    // 如果应用不存在，则直接关闭
+                    onClose()
+                    return
+                }
+                if (isClick && app.keep_alive) {
+                    // 如果是点击关闭，并且是 keep_alive 的应用，则不执行 onBeforeClose
+                    onClose()
+                    return
+                }
+
+                if (/^iframe/i.test(app.url_type)) {
+                    const before = app.onBeforeClose();
+                    if (before && before.then) {
+                        before.then(() => {
+                            onClose()
+                        });
+                    } else {
+                        onClose()
+                    }
+                    return
+                }
+
                 microApp.forceSetData(name, {type: 'beforeClose'}, array => {
                     if (!array?.find(item => item === true)) {
                         if ($A.leftExists(name, 'appstore')) {
                             this.$store.dispatch("updateMicroAppsStatus");
                         }
-                        if ($A.isSubElectron) {
-                            $A.Electron.sendMessage('windowDestroy');
-                        } else {
-                            resolve()
-                        }
+                        onClose()
                     }
                 })
             })
@@ -496,7 +563,7 @@ export default {
          */
         onAssistClose() {
             return new Promise(resolve => {
-                const app = this.apps.findLast(item => item.isOpen)
+                const app = this.microApps.findLast(item => item.isOpen)
                 if (app) {
                     this.closeByName(app.name)
                 } else {
@@ -504,6 +571,44 @@ export default {
                 }
             })
         },
+
+        /**
+         * 弹出窗口（全屏）
+         * @param name
+         */
+        async onPopoutWindow(name, windowConfig = null) {
+            const app = this.microApps.find(item => item.name == name);
+            if (!app) {
+                $A.modalError("应用不存在");
+                return
+            }
+            await this.inlineBlank(app, windowConfig)
+        },
+
+        /**
+         * 是否渲染 iframe
+         * @param app
+         * @returns {boolean}
+         */
+        shouldRenderIFrame(app) {
+            return app.url_type === 'iframe' && (app.isOpen || app.keep_alive) && app.url;
+        },
+
+        /**
+         * 应用更新或卸载
+         * @param apps
+         */
+        onUpdatedOrUninstalled(apps) {
+            const ids = apps.map(item => item.id)
+            if (ids.length === 0) {
+                return
+            }
+            this.microApps.forEach(app => {
+                if (ids.includes(app.id)) {
+                    this.closeMicroApp(app.name, true)
+                }
+            })
+        }
     }
 }
 </script>

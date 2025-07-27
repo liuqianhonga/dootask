@@ -29,6 +29,7 @@ use App\Models\ProjectColumn;
 use App\Models\ProjectInvite;
 use App\Models\ProjectFlowItem;
 use App\Models\ProjectTaskFile;
+use App\Models\ProjectTaskTag;
 use App\Models\ProjectTaskUser;
 use App\Models\WebSocketDialog;
 use App\Exceptions\ApiException;
@@ -424,7 +425,7 @@ class ProjectController extends AbstractController
      */
     public function invite()
     {
-        User::auth();
+        $user = User::auth();
         //
         $project_id = intval(Request::input('project_id'));
         $refresh = Request::input('refresh', 'no');
@@ -440,17 +441,17 @@ class ProjectController extends AbstractController
         if (empty($projectInvite)) {
             $projectInvite = ProjectInvite::createInstance([
                 'project_id' => $project->id,
-                'code' => Base::generatePassword(64),
+                'code' => base64_encode("{$project->id},{$user->userid}," . Base::generatePassword()),
             ]);
             $projectInvite->save();
         } else {
             if ($refresh == 'yes') {
-                $projectInvite->code = Base::generatePassword(64);
+                $projectInvite->code = base64_encode("{$project->id},{$user->userid}," . Base::generatePassword());
                 $projectInvite->save();
             }
         }
         return Base::retSuccess('success', [
-            'url' => Base::fillUrl('manage/project/invite?code=' . $projectInvite->code),
+            'url' => Base::fillUrl('manage/project/invite/' . $projectInvite->code),
             'num' => $projectInvite->num
         ]);
     }
@@ -2120,14 +2121,17 @@ class ProjectController extends AbstractController
         //
         $task = ProjectTask::userTask($task_id);
         //
-        $project = Project::userProject($task->project_id);
-        $permissionKey = ProjectPermission::TASK_UPDATE;
-        if (Arr::exists($param, 'times')) {
-            $permissionKey = ProjectPermission::TASK_TIME;
-        } else if (Arr::exists($param, 'flow_item_id')) {
-            $permissionKey = ProjectPermission::TASK_STATUS;
+        if ($task->hasOwner()) {
+            // 已经存在负责人，则需要检查权限（即：没有任务负责人时，不检查权限）
+            $project = Project::userProject($task->project_id);
+            $permissionKey = ProjectPermission::TASK_UPDATE;
+            if (Arr::exists($param, 'times')) {
+                $permissionKey = ProjectPermission::TASK_TIME;
+            } else if (Arr::exists($param, 'flow_item_id')) {
+                $permissionKey = ProjectPermission::TASK_STATUS;
+            }
+            ProjectPermission::userTaskPermission($project, $permissionKey, $task);
         }
-        ProjectPermission::userTaskPermission($project, $permissionKey, $task);
         //
         $taskUser = ProjectTaskUser::select(['userid', 'owner'])->whereTaskId($task_id)->get();
         $owners = $taskUser->where('owner', 1)->pluck('userid')->toArray();
@@ -2904,8 +2908,8 @@ class ProjectController extends AbstractController
             $template->update($data);
         } else {
             $templateCount = ProjectTaskTemplate::where('project_id', $projectId)->count();
-            if ($templateCount >= 20) {
-                return Base::retError('每个项目最多添加20个模板');
+            if ($templateCount >= 50) {
+                return Base::retError('每个项目最多添加50个模板');
             }
             $template = ProjectTaskTemplate::create($data);
         }
@@ -2988,7 +2992,7 @@ class ProjectController extends AbstractController
     /**
      * @api {post} api/project/tag/save          51. 保存标签
      *
-     * @apiDescription 需要token身份（修改：项目负责人；添加：项目所有成员）
+     * @apiDescription 需要token身份（修改：项目负责人、标签创建者；添加：项目所有成员）
      * @apiVersion 1.0.0
      * @apiGroup project
      * @apiName tag__save
@@ -3029,22 +3033,69 @@ class ProjectController extends AbstractController
             'color' => $color,
             'userid' => $user->userid
         ];
-        $project = Project::userProject($projectId, true, $id > 0 ? true : null);
+        $project = Project::userProject($projectId);
         if ($id > 0) {
             $tag = ProjectTag::where('id', $id)
                 ->where('project_id', $projectId)
                 ->first();
+            if (!$project->owner && $tag->userid != $user->userid) {
+                return Base::retError('没有权限修改标签');
+            }
             if (!$tag) {
                 return Base::retError('标签不存在或已被删除');
             }
-            $tag->update($data);
+            AbstractModel::transaction(function () use ($data, $tag, $project) {
+                $tagWhere = [
+                    'project_id' => $tag->project_id,
+                    'name' => $tag->name,
+                ];
+                // 获取使用该标签的任务ID
+                $taskIds = ProjectTaskTag::where($tagWhere)->pluck('task_id')->toArray();
+                // 更新任务
+                if (!empty($taskIds)) {
+                    ProjectTask::whereIn('id', $taskIds)->update(['updated_at' => Carbon::now()]);
+                }
+                // 更新任务标签
+                ProjectTaskTag::where($tagWhere)->update([
+                    'color' => $data['color'],
+                    'name' => $data['name'],
+                ]);
+                // 更新标签
+                $project->addLog("修改标签", [
+                    'change' => [
+                        [
+                            'type' => 'tag',
+                            'name' => $tag->name,
+                            'color' => $tag->color
+                        ],
+                        [
+                            'type' => 'tag',
+                            'name' => $data['name'],
+                            'color' => $data['color']
+                        ]
+                    ],
+                ]);
+                $tag->update($data);
+            });
         } else {
             $tagCount = ProjectTag::where('project_id', $projectId)->count();
-            if ($tagCount >= 20) {
-                return Base::retError('每个项目最多添加20个标签');
+            if ($tagCount >= 100) {
+                return Base::retError('每个项目最多添加100个标签');
             }
+            if (ProjectTag::where([
+                'project_id' => $projectId,
+                'name' => $name,
+            ])->exists()) {
+                return Base::retError('标签已存在');
+            }
+            $project->addLog("添加标签", [
+                'change' => [
+                    'type' => 'tag',
+                    'name' => $name,
+                    'color' => $color
+                ]
+            ]);
             $tag = ProjectTag::create($data);
-            $project->addLog("添加标签【" . $tag->name . "】");
         }
         return Base::retSuccess('保存成功', $tag);
     }
@@ -3052,7 +3103,7 @@ class ProjectController extends AbstractController
     /**
      * @api {get} api/project/tag/delete          52. 删除标签
      *
-     * @apiDescription 需要token身份（限：项目负责人）
+     * @apiDescription 需要token身份（限：项目负责人、标签创建者）
      * @apiVersion 1.0.0
      * @apiGroup project
      * @apiName tag__delete
@@ -3065,7 +3116,7 @@ class ProjectController extends AbstractController
      */
     public function tag__delete()
     {
-        User::auth();
+        $user = User::auth();
         //
         $id = intval(Request::input('id'));
         if (!$id) {
@@ -3075,9 +3126,35 @@ class ProjectController extends AbstractController
         if (!$tag) {
             return Base::retError('标签不存在或已被删除');
         }
-        Project::userProject($tag->project_id, true, true);
-        $tag->delete();
-        return Base::retSuccess('删除成功');
+        $project = Project::userProject($tag->project_id);
+        if (!$project->owner && $tag->userid != $user->userid) {
+            return Base::retError('没有权限删除标签');
+        }
+        //
+        return AbstractModel::transaction(function () use ($tag, $project) {
+            $tagWhere = [
+                'project_id' => $tag->project_id,
+                'name' => $tag->name,
+            ];
+            // 获取使用该标签的任务ID
+            $taskIds = ProjectTaskTag::where($tagWhere)->pluck('task_id')->toArray();
+            // 更新任务
+            if (!empty($taskIds)) {
+                ProjectTask::whereIn('id', $taskIds)->update(['updated_at' => Carbon::now()]);
+            }
+            // 删除任务标签
+            ProjectTaskTag::where($tagWhere)->delete();
+            // 删除标签
+            $project->addLog("删除标签", [
+                'change' => [
+                    'type' => 'tag',
+                    'name' => $tag->name,
+                    'color' => $tag->color
+                ],
+            ]);
+            $tag->delete();
+            return Base::retSuccess('删除成功');
+        });
     }
 
     /**

@@ -174,10 +174,9 @@ class User extends AbstractModel
         return UserDepartment::where('owner_userid', $this->userid)->exists();
     }
 
-
     /**
      * 获取机器人所有者
-     * @return int|mixed
+     * @return int
      */
     public function getBotOwner()
     {
@@ -185,9 +184,9 @@ class User extends AbstractModel
             return 0;
         }
         $key = "userBotOwner::" . $this->userid;
-        return Cache::remember($key, now()->addMonth(), function() {
+        return intval(Cache::remember($key, now()->addMonth(), function() {
             return intval(UserBot::whereBotId($this->userid)->value('userid')) ?: $this->userid;
-        });
+        }));
     }
 
     /**
@@ -568,6 +567,22 @@ class User extends AbstractModel
     }
 
     /**
+     * 生成无设备的 token（主要用于接口调用，此 token 不检查设备是否存在）
+     * @param self $userinfo
+     * @param $ttl
+     * @return mixed
+     */
+    public static function generateTokenNoDevice($userinfo, $ttl)
+    {
+        $key = 'user_token_no_device_' . $userinfo->userid;
+        return Cache::remember($key, $ttl, function () use ($userinfo, $ttl) {
+            $token = Doo::tokenEncode($userinfo->userid, $userinfo->email, $userinfo->encrypt);
+            Cache::put(UserDevice::ck(md5($token)), $userinfo->userid, $ttl);
+            return $token;
+        });
+    }
+
+    /**
      * userid 获取 基础信息
      * @param int $userid 会员ID
      * @return self
@@ -753,11 +768,11 @@ class User extends AbstractModel
             }
         }
         if ($update) {
-            $botUser->updateInstance($update);
-            if (isset($update['nickname'])) {
+            if (isset($update['nickname']) && $botUser->nickname != $update['nickname']) {
                 $botUser->az = Base::getFirstCharter($botUser->nickname);
                 $botUser->pinyin = Base::cn2pinyin($botUser->nickname);
             }
+            $botUser->updateInstance($update);
             $botUser->save();
         }
         return $botUser;
@@ -766,18 +781,17 @@ class User extends AbstractModel
     /**
      * 是否机器人
      * @param $userid
-     * @return bool|mixed
+     * @return bool
      */
     public static function isBot($userid)
     {
         if (empty($userid)) {
             return false;
         }
-        $userid = intval($userid);
-        if (RequestContext::has("isBot_" . $userid)) {
-            return RequestContext::get("isBot_" . $userid);
-        }
-        return (bool)User::find($userid)?->bot;
+        // 这个不会有变化，所以可以使用永久缓存
+        return (bool)Cache::rememberForever('is-bot-user-' . $userid, function () use ($userid) {
+            return (bool)User::find($userid)?->bot;
+        });
     }
 
     /**

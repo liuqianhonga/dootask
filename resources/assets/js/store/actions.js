@@ -1277,7 +1277,7 @@ export default {
                 channel,
             }
             $A.eeuiAppSetVariate(`location::${channel}`, "");
-            const url = $A.urlAddParams($A.eeuiAppRewriteUrl('../public/tools/map/index.html'), Object.assign(params, objects || {}))
+            const url = $A.urlAddParams(window.location.origin + '/tools/map/index.html', Object.assign(params, objects || {}))
             dispatch('openAppChildPage', {
                 pageType: 'app',
                 pageTitle: title,
@@ -3316,10 +3316,9 @@ export default {
      * 关闭对话
      * @param state
      * @param commit
-     * @param dispatch
      * @param data
      */
-    closeDialog({state, commit, dispatch}, data) {
+    closeDialog({state, commit}, data) {
         $A.syncDispatch("closeDialog", data)
 
         // 判断参数
@@ -3336,6 +3335,24 @@ export default {
             const delIds = msgs.sort((a, b) => b.id - a.id).splice(state.dialogMsgKeep).map(item => item.id)
             commit("message/save", state.dialogMsgs.filter(item => !delIds.includes(item.id)))
         }
+    },
+
+    /**
+     * 清理会话本地缓存
+     * @param state
+     * @param commit
+     * @param data
+     */
+    clearDialogMsgs({state, commit}, data) {
+        $A.syncDispatch("clearDialogMsgs", data)
+
+        // 判断参数
+        if (!/^\d+$/.test(data.id)) {
+            return
+        }
+
+        // 清理会话本地缓存
+        commit("message/save", state.dialogMsgs.filter(item => item.dialog_id != data.id))
     },
 
     /**
@@ -4671,6 +4688,7 @@ export default {
      *  - disable_scope_css 是否禁用样式隔离 (true/false)，默认 false
      *  - auto_dark_theme   是否自动适配深色主题 (true/false)，默认 true
      *  - keep_alive        是否开启微应用保活 (true/false)，默认 true
+     *  - iframe_immersive  是否开启沉浸式模式，仅在 url_type=iframe[_blank] 时有效 (true/false)，默认 false
      *  - props             传递参数
      */
     async openMicroApp({state}, data) {
@@ -4682,6 +4700,7 @@ export default {
         }
         const serverLocation = new URL($A.mainUrl(''))
         data.url = data.url
+            .replace(/^\/+/, '')
             .replace(/^\:(\d+)/ig, (_, port) => {
                 return serverLocation.protocol + '//' + serverLocation.hostname + ':' + port;
             })
@@ -4701,6 +4720,7 @@ export default {
             disable_scope_css: typeof data.disable_scope_css == 'boolean' ? data.disable_scope_css : false,
             auto_dark_theme: typeof data.auto_dark_theme == 'boolean' ? data.auto_dark_theme : true,
             keep_alive: typeof data.keep_alive == 'boolean' ? data.keep_alive : true,
+            iframe_immersive: typeof data.iframe_immersive == 'boolean' ? data.iframe_immersive : false,
             props: $A.isJson(data.props) ? data.props : {},
         }
         if (!state.microAppsIds.includes(config.id)) {
@@ -4713,7 +4733,7 @@ export default {
             .replace(/\{user_email}/g, encodeURIComponent(state.userInfo.email))
             .replace(/\{user_avatar}/g, encodeURIComponent(state.userInfo.userimg))
             .replace(/\{user_token}/g, encodeURIComponent(state.userToken))
-            .replace(/\{system_theme}/g, state.systemConfig.themeName)
+            .replace(/\{system_theme}/g, state.themeName)
             .replace(/\{system_lang}/g, languageName);
         emitter.emit('observeMicroApp:open', config);
     },

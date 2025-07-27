@@ -660,6 +660,8 @@
             }
 
             .dialog-view {
+                flex: 1;
+                min-width: 0;
                 display: flex;
                 flex-direction: column;
                 align-items: flex-start;
@@ -760,8 +762,10 @@
                         position: relative;
 
                         p {
-                            word-break: keep-all;
+                            word-break: break-all;
                             overflow-wrap: break-word;
+                            word-wrap: break-word;
+                            white-space: pre-wrap;
                         }
 
                         a,

@@ -456,27 +456,10 @@ class WebSocketDialogMsg extends AbstractModel
                 'parent_id' => $this->id,           // 转发的消息ID
                 'parent_userid' => $this->userid,   // 转发的消息会员ID
                 'show' => $showSource,              // 是否显示原发送者信息
+                'leave' => $leaveMessage ? 1 : 0,   // 是否留言（用于判断是否发给AI）
             ];
             $msgs = [];
-            $already = [];
-            if ($dialogids) {
-                if (!is_array($dialogids)) {
-                    $dialogids = [$dialogids];
-                }
-                foreach ($dialogids as $dialogid) {
-                    $res = self::sendMsg('forward-' . $forwardId, $dialogid, $this->type, $msgData, $user->userid);
-                    if (Base::isSuccess($res)) {
-                        $msgs[] = $res['data'];
-                        $already[] = $dialogid;
-                    }
-                    if ($leaveMessage) {
-                        $res = self::sendMsg(null, $dialogid, 'text', ['text' => $leaveMessage], $user->userid);
-                        if (Base::isSuccess($res)) {
-                            $msgs[] = $res['data'];
-                        }
-                    }
-                }
-            }
+            $dialogs = [];
             if ($userids) {
                 if (!is_array($userids)) {
                     $userids = [$userids];
@@ -486,17 +469,35 @@ class WebSocketDialogMsg extends AbstractModel
                         continue;
                     }
                     $dialog = WebSocketDialog::checkUserDialog($user, $userid);
-                    if ($dialog && !in_array($dialog->id, $already)) {
-                        $res = self::sendMsg('forward-' . $forwardId, $dialog->id, $this->type, $msgData, $user->userid);
-                        if (Base::isSuccess($res)) {
-                            $msgs[] = $res['data'];
-                        }
-                        if ($leaveMessage) {
-                            $res = self::sendMsg(null, $dialog->id, 'text', ['text' => $leaveMessage], $user->userid);
-                            if (Base::isSuccess($res)) {
-                                $msgs[] = $res['data'];
-                            }
-                        }
+                    if ($dialog) {
+                        $dialogs[$dialog->id] = $dialog;
+                    }
+                }
+            }
+            if ($dialogids) {
+                if (!is_array($dialogids)) {
+                    $dialogids = [$dialogids];
+                }
+                foreach ($dialogids as $dialogid) {
+                    if (isset($dialogs[$dialogid])) {
+                        continue;
+                    }
+                    $dialog = WebSocketDialog::find($dialogid);
+                    if ($dialog) {
+                        $dialogs[$dialog->id] = $dialog;
+                    }
+                }
+            }
+            foreach ($dialogs as $dialog) {
+                $res = self::sendMsg('forward-' . $forwardId, $dialog->id, $this->type, $msgData, $user->userid);
+                if (Base::isSuccess($res)) {
+                    $msgs[] = $res['data'];
+                }
+                if ($leaveMessage) {
+                    $action = $dialog->isAiDialog() ? "reply-{$res['data']['id']}" : null;
+                    $res = self::sendMsg($action, $dialog->id, 'text', ['text' => $leaveMessage], $user->userid);
+                    if (Base::isSuccess($res)) {
+                        $msgs[] = $res['data'];
                     }
                 }
             }
@@ -655,7 +656,7 @@ class WebSocketDialogMsg extends AbstractModel
      * @param bool $preserveHtml    保留html格式
      * @return string|string[]|null
      */
-    private static function previewTextMsg($msgData, $preserveHtml = false)
+    public static function previewTextMsg($msgData, $preserveHtml = false)
     {
         $text = $msgData['text'] ?? '';
         if (!$text) return '';
@@ -664,8 +665,16 @@ class WebSocketDialogMsg extends AbstractModel
             if (preg_match('/:::\s*reasoning\s+/', $text)) {
                 return Doo::translate('思考中...');
             }
-            $text = Base::markdown2html($text);
-            $text = self::previewConvertTaskList($text);
+            $title = '';
+            if (preg_match('/^#{1,2}\s+(.+)/m', $text, $matches)) {
+                $title = trim($matches[1]);
+            }
+            if ($title) {
+                $text = $title;
+            } else {
+                $text = Base::markdown2html($text);
+                $text = self::previewConvertTaskList($text);
+            }
         }
         $text = preg_replace("/<img\s+class=\"emoticon\"[^>]*?alt=\"(\S+)\"[^>]*?>/", "[$1]", $text);
         $text = preg_replace("/<img\s+class=\"emoticon\"[^>]*?>/", "[" . Doo::translate('动画表情') . "]", $text);

@@ -72,6 +72,9 @@ export default {
             formRules: {
                 name: [
                     { required: true, message: this.$L('请输入标签名称'), trigger: 'blur' }
+                ],
+                color: [
+                    { required: true, message: this.$L('请选择标签颜色'), trigger: 'blur' }
                 ]
             },
 
@@ -95,10 +98,7 @@ export default {
     },
     methods: {
         onOpen(tag = null) {
-            if (tag === null) {
-                tag = this.getEmptyTag()
-            }
-            this.editingTag = { ...tag }
+            this.editingTag = { ...this.getEmptyTag(), ...(tag || {}) }
             this.showEditModal = true
         },
 

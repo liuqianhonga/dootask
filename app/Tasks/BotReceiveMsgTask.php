@@ -19,7 +19,6 @@ use App\Module\Ihttp;
 use App\Module\TextExtractor;
 use Carbon\Carbon;
 use Exception;
-use League\HTMLToMarkdown\HtmlConverter;
 use DB;
 
 /**
@@ -206,7 +205,7 @@ class BotReceiveMsgTask extends AbstractTask
                  * 创建
                  */
                 case '/newbot':
-                    $res = UserBot::newbot($msg->userid, $array[1]);
+                    $res = UserBot::newBot($msg->userid, $array[1]);
                     if (Base::isError($res)) {
                         $content = $res['msg'];
                     } else {
@@ -382,6 +381,7 @@ class BotReceiveMsgTask extends AbstractTask
                     default => '不支持的指令',
                 };
                 if ($type == '/api') {
+                    $msgData['email'] = $botUser->email;
                     $msgData['version'] = Base::getVersion();
                 } elseif ($type == '/help') {
                     $msgData['manager'] = $isManager;
@@ -403,11 +403,15 @@ class BotReceiveMsgTask extends AbstractTask
     {
         $serverUrl = 'http://nginx';
         $userBot = null;
-        $extras = [];
+        $extras = ['timestamp' => time()];
         $replyText = null;
         $errorContent = null;
         if ($botUser->isAiBot($type)) {
             // AI机器人
+            if (Base::val($msg->msg, 'forward_data.leave')) {
+                // AI机器人不处理带有留言的转发消息，因为他要处理那条留言消息
+                return;
+            }
             $setting = Base::setting('aibotSetting');
             $extras = [
                 'model_type' => match ($type) {
@@ -519,6 +523,7 @@ class BotReceiveMsgTask extends AbstractTask
                 'text' => $command,
                 'reply_text' => $replyText,
                 'token' => User::generateToken($botUser),
+                'session_id' => $dialog->session_id,
                 'dialog_id' => $dialog->id,
                 'dialog_type' => $dialog->type,
                 'msg_id' => $msg->id,
@@ -527,6 +532,16 @@ class BotReceiveMsgTask extends AbstractTask
                 'bot_uid' => $botUser->userid,
                 'version' => Base::getVersion(),
                 'extras' => Base::array2json($extras)
+            ];
+            // 添加用户信息
+            $userInfo = User::find($msg->userid);
+            $data['msg_user'] = [
+                'userid' => $userInfo->userid,
+                'email' => $userInfo->email,
+                'nickname' => $userInfo->nickname,
+                'profession' => $userInfo->profession,
+                'lang' => $userInfo->lang,
+                'token' => User::generateTokenNoDevice($userInfo, now()->addHour()),
             ];
             $res = Ihttp::ihttp_post($webhookUrl, $data, 30);
             if ($userBot) {
