@@ -1549,6 +1549,18 @@
                                 background-color: $primary-color;
                             }
                         }
+
+                        .markdown-body {
+                            table {
+                                thead {
+                                    th {
+                                        overflow: hidden;
+                                        text-overflow: ellipsis;
+                                        white-space: nowrap;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     .dialog-emoji {
@@ -1656,6 +1668,9 @@
                     .todo {
                         position: relative;
                         cursor: pointer;
+                        &.todo_done {
+                            color: $primary-color;
+                        }
                         .common-loading {
                             margin: 0 3px 0 0;
                         }

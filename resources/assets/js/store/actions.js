@@ -1260,7 +1260,7 @@ export default {
     /**
      * 打开地图选位置（App）
      * @param dispatch
-     * @param objects {{key: string, point: string}}
+     * @param objects {{type: string, key: string, point: string, radius: number}}
      * @returns {Promise<unknown>}
      */
     openAppMapPage({dispatch}, objects) {
@@ -1292,6 +1292,10 @@ export default {
                         const data = $A.jsonParse($A.eeuiAppGetVariate(`location::${channel}`));
                         if (data.point) {
                             $A.eeuiAppSetVariate(`location::${channel}`, "");
+                            if (data.distance > objects.radius) {
+                                $A.modalError(`你选择的位置「${data.title}」不在签到范围内`)
+                                return
+                            }
                             resolve(data);
                         }
                     }
@@ -1864,8 +1868,12 @@ export default {
             });
         } else if ($A.isJson(data)) {
             data._time = $A.dayjs().unix();
+            //
             if (data.flow_item_name && data.flow_item_name.indexOf("|") !== -1) {
-                [data.flow_item_status, data.flow_item_name] = data.flow_item_name.split("|")
+                const flowInfo = $A.convertWorkflow(data.flow_item_name)
+                data.flow_item_status = flowInfo.status;
+                data.flow_item_name = flowInfo.name;
+                data.flow_item_color = flowInfo.color;
             }
             //
             if (typeof data.archived_at !== "undefined") {
@@ -2648,7 +2656,7 @@ export default {
                         state.cacheTasks.filter(({flow_item_id})=> flow_item_id == item.id).some(task => {
                             dispatch("saveTask", {
                                 id: task.id,
-                                flow_item_name: `${item.status}|${item.name}`,
+                                flow_item_name: `${item.status}|${item.name}|${item.color}`,
                             })
                         })
                     }

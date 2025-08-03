@@ -16,6 +16,7 @@ use Carbon\Carbon;
  * @property int $id
  * @property int|null $userid 所属人ID
  * @property int|null $bot_id 机器人ID
+ * @property int|null $session 开启新会话功能
  * @property int|null $clear_day 消息自动清理天数
  * @property \Illuminate\Support\Carbon|null $clear_at 下一次清理时间
  * @property string|null $webhook_url 消息webhook地址
@@ -36,6 +37,7 @@ use Carbon\Carbon;
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereClearDay($value)
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereCreatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereSession($value)
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereUserid($value)
  * @method static \Illuminate\Database\Eloquent\Builder|UserBot whereWebhookNum($value)
@@ -103,16 +105,27 @@ class UserBot extends AbstractModel
                     return $menu;
                 }
                 if (in_array('locat', $setting['modes']) && Base::isEEUIApp()) {
-                    $menu[] = [
-                        'key' => 'locat-checkin',
-                        'label' => Doo::translate('定位签到'),
-                        'config' => [
-                            'key' => $setting['locat_bd_lbs_key'],
-                            'lng' => $setting['locat_bd_lbs_point']['lng'],
-                            'lat' => $setting['locat_bd_lbs_point']['lat'],
-                            'radius' => $setting['locat_bd_lbs_point']['radius'],
-                        ]
+                    $mapTypes = [
+                        'baidu' => ['key' => 'locat_bd_lbs_key', 'point' => 'locat_bd_lbs_point', 'msg' => '请填写百度地图AK'],
+                        'amap' => ['key' => 'locat_amap_key', 'point' => 'locat_amap_point', 'msg' => '请填写高德地图Key'],
+                        'tencent' => ['key' => 'locat_tencent_key', 'point' => 'locat_tencent_point', 'msg' => '请填写腾讯地图Key'],
                     ];
+                    $type = $setting['locat_map_type'];
+                    if (isset($mapTypes[$type])) {
+                        $conf = $mapTypes[$type];
+                        $point = $setting[$conf['point']];
+                        $menu[] = [
+                            'key' => 'locat-checkin',
+                            'label' => Doo::translate('定位签到'),
+                            'config' => [
+                                'type' => $type,
+                                'key' => $setting[$conf['key']],
+                                'lng' => $point['lng'],
+                                'lat' => $point['lat'],
+                                'radius' => intval($point['radius']),
+                            ]
+                        ];
+                    }
                 }
                 if (in_array('manual', $setting['modes'])) {
                     $menu[] = [
@@ -234,7 +247,7 @@ class UserBot extends AbstractModel
             if (empty($extra)) {
                 return '当前客户端版本低（所需版本≥v0.39.75）。';
             }
-            if ($extra['type'] === 'bd') {
+            if (in_array($extra['type'], ['baidu', 'amap', 'tencent'])) {
                 // todo 判断距离
             } else {
                 return '错误的定位签到。';

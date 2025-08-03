@@ -126,6 +126,8 @@ export default {
     data() {
         return {
             appInter: null,
+            appActivated: true,
+
             countDown: Math.min(30, 60 - $A.daytz().second()),
             lastCheckUpgradeYmd: $A.daytz().format('YYYY-MM-DD'),
         }
@@ -612,17 +614,37 @@ export default {
             if (!this.$isEEUIApp) {
                 return;
             }
+            $A.eeuiAppHideWebviewSnapshot()
             // APP进入前台
             window.__onAppActive = () => {
+                this.appActivated = true
                 this.autoTheme()
                 $A.updateTimezone()
                 $A.IDBTest()
+                $A.eeuiAppHideWebviewSnapshot()
                 this.$store.dispatch("safeAreaInsets")
                 const nowYmd = $A.daytz().format('YYYY-MM-DD')
                 if (this.lastCheckUpgradeYmd != nowYmd) {
                     this.lastCheckUpgradeYmd = nowYmd
                     $A.eeuiAppCheckUpdate();
                 }
+            }
+            // APP进入后台
+            window.__onAppDeactive = () => {
+                this.appActivated = false
+                setTimeout(() => {
+                    if (this.appActivated) {
+                        // 如果APP处于激活状态，则不显示快照
+                        return;
+                    }
+                    $A.eeuiAppGetWebviewSnapshot(ok => {
+                        if (!ok || this.appActivated) {
+                            // 如果获取快照失败，或者APP处于激活状态，则不显示快照
+                            return;
+                        }
+                        $A.eeuiAppShowWebviewSnapshot()
+                    });
+                }, 500);
             }
             // 页面失活
             window.__onPagePause = () => {

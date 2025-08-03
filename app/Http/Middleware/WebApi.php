@@ -19,8 +19,7 @@ class WebApi
      */
     public function handle($request, Closure $next)
     {
-        // 为每个请求生成唯一ID
-        $request->requestId = RequestContext::generateRequestId();
+        // 记录请求信息
         RequestContext::set('start_time', microtime(true));
         RequestContext::set('header_language', $request->header('language'));
 
@@ -76,6 +75,6 @@ class WebApi
     public function terminate()
     {
         // 请求结束后清理上下文
-        RequestContext::clear();
+        RequestContext::clean();
     }
 }

@@ -128,25 +128,28 @@
                             <EDropdown
                                 v-else
                                 trigger="click"
-                                size="small"
                                 @command="dropColumn(column, $event)">
                                 <Icon type="ios-more" />
                                 <EDropdownMenu slot="dropdown" class="project-panel-more-dropdown-menu">
-                                    <EDropdownItem command="title">
-                                        <div class="item">
-                                            <Icon type="md-create" />{{$L('修改')}}
-                                        </div>
-                                    </EDropdownItem>
-                                    <EDropdownItem command="remove">
-                                        <div class="item">
-                                            <Icon type="md-trash" />{{$L('删除')}}
-                                        </div>
-                                    </EDropdownItem>
-                                    <EDropdownItem v-for="(c, k) in $store.state.columnColorList" :key="k" :divided="k==0" :command="c">
-                                        <div class="item">
-                                            <i class="taskfont" :style="{color:c.color||'#ddd'}" v-html="c.color == column.color ? '&#xe61d;' : '&#xe61c;'"></i>{{$L(c.name)}}
-                                        </div>
-                                    </EDropdownItem>
+                                    <li class="project-panel-more-dropdown-warp">
+                                        <ul>
+                                            <EDropdownItem command="title">
+                                                <div class="item">
+                                                    <Icon type="md-create" />{{$L('修改')}}
+                                                </div>
+                                            </EDropdownItem>
+                                            <EDropdownItem command="remove">
+                                                <div class="item">
+                                                    <Icon type="md-trash" />{{$L('删除')}}
+                                                </div>
+                                            </EDropdownItem>
+                                            <EDropdownItem v-for="(c, k) in $store.state.columnColorList" :key="k" :divided="k==0" :command="c">
+                                                <div class="item">
+                                                    <i class="taskfont" :style="{color:c.color||'#ddd'}" v-html="c.color == column.color ? '&#xe61d;' : '&#xe61c;'"></i>{{$L(c.name)}}
+                                                </div>
+                                            </EDropdownItem>
+                                        </ul>
+                                    </li>
                                 </EDropdownMenu>
                             </EDropdown>
                             <Icon class="last" type="md-add" @click="addTopShow(column.id, true)" />
@@ -177,9 +180,10 @@
                             @remove="sortUpdate">
                             <div
                                 v-for="item in column.tasks"
+                                :key="`${column.id}_${item.id}`"
                                 :data-id="item.id"
                                 :class="['task-item task-draggable', item.complete_at ? 'complete' : '', taskIsHidden(item) ? 'hidden' : '']"
-                                :style="taskItemStyle(item)"
+                                :style="$A.generateColorVarStyle(item.flow_item_color, [10], 'flow-item-custom-color', taskItemStyle(item))"
                                 @click="openTask(item)">
                                 <template v-if="taskItemVisible(item)">
                                     <div :class="['task-head', item.desc ? 'has-desc' : '']">
@@ -969,7 +973,8 @@ export default {
                             value: item2.id,
                             label: `${item2.name} (${length})`,
                             status: item2.status,
-                            class: item2.status
+                            class: item2.status,
+                            style: $A.generateColorVarStyle(item2.color, [10], 'flow-item-custom-color'),
                         }
                     })
                 }

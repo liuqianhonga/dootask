@@ -20,7 +20,11 @@
                             </div>
                         </EDropdownItem>
                         <template v-else-if="turns.length > 0">
-                            <EDropdownItem v-for="item in turns" :key="item.id" :command="`turn::${item.id}`">
+                            <EDropdownItem
+                                v-for="item in turns"
+                                :key="item.id"
+                                :command="`turn::${item.id}`"
+                                :style="$A.generateColorVarStyle(item.color, [10], 'flow-item-custom-color')">
                                 <div class="item flow">
                                     <Icon v-if="item.id == task.flow_item_id && flow.auto_assign !== true" class="check" type="md-checkmark-circle-outline" />
                                     <Icon v-else type="md-radio-button-off" />
@@ -45,7 +49,7 @@
                             <template v-if="operationShow">
                                 <EDropdownItem command="send" :divided="turns.length > 0">
                                     <div class="item">
-                                        <i class="taskfont movefont">&#xe606;</i>{{$L('发送')}}
+                                        <i class="taskfont movefont">&#xe629;</i>{{$L('发送')}}
                                     </div>
                                 </EDropdownItem>
                                 <EDropdownItem command="archived">

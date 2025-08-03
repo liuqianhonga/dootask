@@ -6,8 +6,8 @@ use App\Models\UserDevice;
 use App\Models\WebSocketDialog;
 use App\Models\WebSocketDialogMsg;
 use App\Module\AI;
+use App\Module\Down;
 use Request;
-use Session;
 use Response;
 use Madzipper;
 use Carbon\Carbon;
@@ -328,7 +328,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/aibot          04. 获取会议设置、保存AI机器人设置（限管理员）
+     * @api {get} api/system/setting/aibot          05. 获取会议设置、保存AI机器人设置（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -386,7 +386,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/aibot_models          05. 获取AI模型
+     * @api {get} api/system/setting/aibot_models          06. 获取AI模型
      *
      * @apiDescription 获取所有AI机器人模型设置
      * @apiVersion 1.0.0
@@ -407,7 +407,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/aibot_defmodels          06. 获取AI默认模型
+     * @api {get} api/system/setting/aibot_defmodels          07. 获取AI默认模型
      *
      * @apiDescription 获取AI机器人默认模型
      * @apiVersion 1.0.0
@@ -445,7 +445,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/checkin          07. 获取签到设置、保存签到设置（限管理员）
+     * @api {get} api/system/setting/checkin          08. 获取签到设置、保存签到设置（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -481,8 +481,13 @@ class SystemController extends AbstractController
                     'face_remark',
                     'face_retip',
                     'locat_remark',
+                    'locat_map_type',
                     'locat_bd_lbs_key',
                     'locat_bd_lbs_point', // 格式：{"lng":116.404, "lat":39.915, "radius":500}
+                    'locat_amap_key',
+                    'locat_amap_point', // 格式：{"lng":116.404, "lat":39.915, "radius":500}
+                    'locat_tencent_key',
+                    'locat_tencent_point', // 格式：{"lng":116.404, "lat":39.915, "radius":500}
                     'manual_remark',
                     'modes',
                     'key',
@@ -500,14 +505,25 @@ class SystemController extends AbstractController
                 }
                 if (is_array($all['modes'])) {
                     if (in_array('locat', $all['modes'])) {
-                        if (empty($all['locat_bd_lbs_key'])) {
-                            return Base::retError('请填写百度地图AK');
+                        $mapTypes = [
+                            'baidu' => ['key' => 'locat_bd_lbs_key', 'point' => 'locat_bd_lbs_point', 'msg' => '请填写百度地图AK'],
+                            'amap' => ['key' => 'locat_amap_key', 'point' => 'locat_amap_point', 'msg' => '请填写高德地图Key'],
+                            'tencent' => ['key' => 'locat_tencent_key', 'point' => 'locat_tencent_point', 'msg' => '请填写腾讯地图Key'],
+                        ];
+                        $type = $all['locat_map_type'];
+                        if (!isset($mapTypes[$type])) {
+                            return Base::retError('请选择地图类型');
                         }
-                        if (!is_array($all['locat_bd_lbs_point'])) {
+                        $conf = $mapTypes[$type];
+                        if (empty($all[$conf['key']])) {
+                            return Base::retError($conf['msg']);
+                        }
+                        if (!is_array($all[$conf['point']])) {
                             return Base::retError('请选择允许签到位置');
                         }
-                        $all['locat_bd_lbs_point']['radius'] = intval($all['locat_bd_lbs_point']['radius']);
-                        if (empty($all['locat_bd_lbs_point']['lng']) || empty($all['locat_bd_lbs_point']['lat']) || empty($all['locat_bd_lbs_point']['radius'])) {
+                        $all[$conf['point']]['radius'] = intval($all[$conf['point']]['radius']);
+                        $point = $all[$conf['point']];
+                        if (empty($point['lng']) || empty($point['lat']) || empty($point['radius'])) {
                             return Base::retError('请选择有效的签到位置');
                         }
                     }
@@ -539,7 +555,10 @@ class SystemController extends AbstractController
         $setting['face_remark'] = $setting['face_remark'] ?: Doo::translate('考勤机');
         $setting['face_retip'] = $setting['face_retip'] ?: 'open';
         $setting['locat_remark'] = $setting['locat_remark'] ?: Doo::translate('定位签到');
+        $setting['locat_map_type'] = $setting['locat_map_type'] ?: 'baidu';
         $setting['locat_bd_lbs_point'] = is_array($setting['locat_bd_lbs_point']) ? $setting['locat_bd_lbs_point'] : ['radius' => 500];
+        $setting['locat_amap_point'] = is_array($setting['locat_amap_point']) ? $setting['locat_amap_point'] : ['radius' => 500];
+        $setting['locat_tencent_point'] = is_array($setting['locat_tencent_point']) ? $setting['locat_tencent_point'] : ['radius' => 500];
         $setting['manual_remark'] = $setting['manual_remark'] ?: Doo::translate('手动签到');
         $setting['time'] = $setting['time'] ? Base::json2array($setting['time']) : ['09:00', '18:00'];
         $setting['advance'] = intval($setting['advance']) ?: 120;
@@ -557,7 +576,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/apppush          08. 获取APP推送设置、保存APP推送设置（限管理员）
+     * @api {get} api/system/setting/apppush          09. 获取APP推送设置、保存APP推送设置（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -602,7 +621,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/thirdaccess          09. 第三方帐号（限管理员）
+     * @api {get} api/system/setting/thirdaccess          10. 第三方帐号（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -672,7 +691,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/file          10. 文件设置（限管理员）
+     * @api {get} api/system/setting/file          11. 文件设置（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -712,7 +731,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/demo          11. 获取演示帐号
+     * @api {get} api/system/demo          12. 获取演示帐号
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -736,7 +755,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {post} api/system/priority          12. 任务优先级
+     * @api {post} api/system/priority          13. 任务优先级
      *
      * @apiDescription 获取任务优先级、保存任务优先级
      * @apiVersion 1.0.0
@@ -785,7 +804,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {post} api/system/column/template          13. 创建项目模板
+     * @api {post} api/system/column/template          14. 创建项目模板
      *
      * @apiDescription 获取创建项目模板、保存创建项目模板
      * @apiVersion 1.0.0
@@ -832,7 +851,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {post} api/system/license          14. License
+     * @api {post} api/system/license          15. License
      *
      * @apiDescription 获取License信息、保存License（限管理员）
      * @apiVersion 1.0.0
@@ -902,7 +921,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/get/info          15. 获取终端详细信息
+     * @api {get} api/system/get/info          16. 获取终端详细信息
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -929,7 +948,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/get/ip          16. 获取IP地址
+     * @api {get} api/system/get/ip          17. 获取IP地址
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -944,7 +963,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/get/cnip          17. 是否中国IP地址
+     * @api {get} api/system/get/cnip          18. 是否中国IP地址
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -961,7 +980,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {post} api/system/imgupload          20. 上传图片
+     * @api {post} api/system/imgupload          19. 上传图片
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1027,7 +1046,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/get/imgview          21. 浏览图片空间
+     * @api {get} api/system/get/imgview          20. 浏览图片空间
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1124,7 +1143,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {post} api/system/fileupload          22. 上传文件
+     * @api {post} api/system/fileupload          21. 上传文件
      *
      * @apiDescription 需要token身份
      * @apiVersion 1.0.0
@@ -1168,7 +1187,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/get/updatelog          23. 获取更新日志
+     * @api {get} api/system/get/updatelog          22. 获取更新日志
      *
      * @apiDescription 获取更新日志
      * @apiVersion 1.0.0
@@ -1211,7 +1230,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/email/check          24. 邮件发送测试（限管理员）
+     * @api {get} api/system/email/check          23. 邮件发送测试（限管理员）
      *
      * @apiDescription 测试配置邮箱是否能发送邮件
      * @apiVersion 1.0.0
@@ -1257,7 +1276,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/checkin/export          25. 导出签到数据（限管理员）
+     * @api {get} api/system/checkin/export          24. 导出签到数据（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -1309,18 +1328,19 @@ class SystemController extends AbstractController
         }
         $dialog = WebSocketDialog::checkUserDialog($botUser, $user->userid);
         //
-        go(function () use ($secondStart, $secondEnd, $time, $userid, $date, $user, $botUser, $dialog) {
+        $doo = Doo::load();
+        go(function () use ($doo, $secondStart, $secondEnd, $time, $userid, $date, $user, $botUser, $dialog) {
             Coroutine::sleep(1);
             //
             $headings = [];
-            $headings[] = Doo::translate('签到人');
-            $headings[] = Doo::translate('签到日期');
-            $headings[] = Doo::translate('班次时间');
-            $headings[] = Doo::translate('首次签到时间');
-            $headings[] = Doo::translate('首次签到结果');
-            $headings[] = Doo::translate('最后签到时间');
-            $headings[] = Doo::translate('最后签到结果');
-            $headings[] = Doo::translate('参数数据');
+            $headings[] = $doo->translate('签到人');
+            $headings[] = $doo->translate('签到日期');
+            $headings[] = $doo->translate('班次时间');
+            $headings[] = $doo->translate('首次签到时间');
+            $headings[] = $doo->translate('首次签到结果');
+            $headings[] = $doo->translate('最后签到时间');
+            $headings[] = $doo->translate('最后签到结果');
+            $headings[] = $doo->translate('参数数据');
             //
             $content = [];
             $content[] = [
@@ -1356,12 +1376,12 @@ class SystemController extends AbstractController
                     if (Timer::time() < $startT + $secondStart) {
                         $firstResult = "-";
                     } else {
-                        $firstResult = Doo::translate("正常");
+                        $firstResult = $doo->translate("正常");
                         if (empty($firstTimestamp)) {
-                            $firstResult = Doo::translate("缺卡");
+                            $firstResult = $doo->translate("缺卡");
                             $styles["E{$index}"] = ["font" => ["color" => ["rgb" => "ff0000"]]];
                         } elseif ($firstTimestamp > $startT + $secondStart) {
-                            $firstResult = Doo::translate("迟到");
+                            $firstResult = $doo->translate("迟到");
                             $styles["E{$index}"] = ["font" => ["color" => ["rgb" => "436FF6"]]];
                         }
                     }
@@ -1369,12 +1389,12 @@ class SystemController extends AbstractController
                         $lastResult = "-";
                         $lastTimestamp = 0;
                     } else {
-                        $lastResult = Doo::translate("正常");
+                        $lastResult = $doo->translate("正常");
                         if (empty($lastTimestamp) || $lastTimestamp === $firstTimestamp) {
-                            $lastResult = Doo::translate("缺卡");
+                            $lastResult = $doo->translate("缺卡");
                             $styles["G{$index}"] = ["font" => ["color" => ["rgb" => "ff0000"]]];
                         } elseif ($lastTimestamp < $startT + $secondEnd) {
-                            $lastResult = Doo::translate("早退");
+                            $lastResult = $doo->translate("早退");
                             $styles["G{$index}"] = ["font" => ["color" => ["rgb" => "436FF6"]]];
                         }
                     }
@@ -1417,7 +1437,7 @@ class SystemController extends AbstractController
             } else {
                 $fileName .= '的签到记录';
             }
-            $fileName = Doo::translate($fileName) . '_' . Timer::time() . '.xlsx';
+            $fileName = $doo->translate($fileName) . '_' . Timer::time() . '.xlsx';
             $filePath = "temp/checkin/export/" . date("Ym", Timer::time());
             $export = new BillMultipleExport($sheets);
             $res = $export->store($filePath . "/" . $fileName);
@@ -1445,11 +1465,10 @@ class SystemController extends AbstractController
             }
             //
             if (file_exists($zipPath)) {
-                $base64 = base64_encode(Base::array2string([
+                $key = Down::cache_encode([
                     'file' => $zipFile,
-                ]));
-                $fileUrl = Base::fillUrl('api/system/checkin/down?key=' . urlencode($base64));
-                Session::put('checkin::export:userid', $user->userid);
+                ]);
+                $fileUrl = Base::fillUrl('api/system/checkin/down?key=' . $key);
                 WebSocketDialogMsg::sendMsg(null, $dialog->id, 'template', [
                     'type' => 'file_download',
                     'title' => '导出签到数据已完成',
@@ -1479,7 +1498,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/checkin/down          26. 下载导出的签到数据
+     * @api {get} api/system/checkin/down          25. 下载导出的签到数据
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -1491,21 +1510,16 @@ class SystemController extends AbstractController
      */
     public function checkin__down()
     {
-        $userid = Session::get('checkin::export:userid');
-        if (empty($userid)) {
-            return Base::ajaxError("请求已过期，请重新导出！", [], 0, 502);
-        }
-        //
-        $array = Base::string2array(base64_decode(urldecode(Request::input('key'))));
+        $array = Down::cache_decode();
         $file = $array['file'];
         if (empty($file) || !file_exists(storage_path($file))) {
-            return Base::ajaxError("文件不存在！", [], 0, 502);
+            return Base::ajaxError("文件不存在！", [], 0, 403);
         }
         return Response::download(storage_path($file));
     }
 
     /**
-     * @api {get} api/system/version          27. 获取版本号
+     * @api {get} api/system/version          26. 获取版本号
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -1551,7 +1565,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/prefetch          28. 预加载的资源
+     * @api {get} api/system/prefetch          27. 预加载的资源
      *
      * @apiVersion 1.0.0
      * @apiGroup system

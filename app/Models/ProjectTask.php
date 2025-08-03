@@ -12,7 +12,6 @@ use App\Tasks\PushTask;
 use App\Exceptions\ApiException;
 use App\Observers\ProjectTaskObserver;
 use Hhxsv5\LaravelS\Swoole\Task\Task;
-use League\HTMLToMarkdown\HtmlConverter;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -486,7 +485,7 @@ class ProjectTask extends AbstractModel
             foreach ($projectFlowItem as $item) {
                 if ($item->status == 'start') {
                     $task->flow_item_id = $item->id;
-                    $task->flow_item_name = $item->status . "|" . $item->name;
+                    $task->flow_item_name = $item->status . "|" . $item->name . "|" . $item->color;
                     $owner = array_merge($owner, $item->userids);
                     break;
                 }
@@ -650,7 +649,7 @@ class ProjectTask extends AbstractModel
                     $data['column_id'] = $newFlowItem->columnid;
                 }
                 $this->flow_item_id = $newFlowItem->id;
-                $this->flow_item_name = $newFlowItem->status . "|" . $newFlowItem->name;
+                $this->flow_item_name = $newFlowItem->status . "|" . $newFlowItem->name . "|" . $newFlowItem->color;
                 $this->addLog("修改{任务}状态", [
                     'flow' => $flowData,
                     'change' => [$currentFlowItem?->name, $newFlowItem->name]
@@ -1908,7 +1907,7 @@ class ProjectTask extends AbstractModel
                 // 更新任务流程
                 $flowItem = projectFlowItem::whereProjectId($projectId)->whereId($flowItemId)->first();
                 $this->flow_item_id = $flowItemId;
-                $this->flow_item_name = $flowItem->status . "|" . $flowItem->name;
+                $this->flow_item_name = $flowItem->status . "|" . $flowItem->name . "|" . $flowItem->color;
                 if ($flowItem->status == 'end') {
                     $this->completeTask(Carbon::now(), $flowItem->name);
                 } else {
@@ -1958,8 +1957,7 @@ class ProjectTask extends AbstractModel
         if ($this->content) {
             $taskDesc = $this->content?->getContentInfo();
             if ($taskDesc) {
-                $converter = new HtmlConverter(['strip_tags' => true]);
-                $descContent = Base::cutStr($converter->convert($taskDesc['content']), 2000);
+                $descContent = Base::cutStr(Base::html2markdown($taskDesc['content'], ['strip_tags' => true]), 2000);
                 $contexts[] = <<<EOF
                     任务描述：
                     ```md
