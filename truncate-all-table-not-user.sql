@@ -58,9 +58,10 @@ TRUNCATE TABLE pre_web_socket_dialogs;
 TRUNCATE TABLE pre_web_socket_tmp_msgs;
 TRUNCATE TABLE pre_web_sockets;
 
-UPDATE pre_users SET email = 'liuqianhonga@outlook.com' WHERE userid = 1;
-
-DELETE FROM pre_users WHERE email = 'test@dootask.com';
-
 -- 启用外键约束检查（通用语法）
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- 修改管理员账号的邮箱
+UPDATE pre_users SET email = 'liuqianhonga@outlook.com' WHERE userid = 1;
+-- 删除测试账号
+DELETE FROM pre_users WHERE email = 'test@dootask.com';
