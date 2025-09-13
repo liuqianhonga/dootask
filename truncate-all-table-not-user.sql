@@ -1,8 +1,19 @@
+-- Active: 1757772408500@@192.168.9.103@3306@dootask
 -- 禁用外键约束检查（通用语法）
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- 清空表操作
+TRUNCATE TABLE pre_approve_execution;
+TRUNCATE TABLE pre_approve_execution_history;
+TRUNCATE TABLE pre_approve_identitylink;
+TRUNCATE TABLE pre_approve_identitylink_history;
+TRUNCATE TABLE pre_approve_proc_inst;
+TRUNCATE TABLE pre_approve_proc_inst_history;
 TRUNCATE TABLE pre_approve_proc_msgs;
+TRUNCATE TABLE pre_approve_procdef;
+TRUNCATE TABLE pre_approve_procdef_history;
+TRUNCATE TABLE pre_approve_task;
+TRUNCATE TABLE pre_approve_task_history;
 TRUNCATE TABLE pre_complaints;
 TRUNCATE TABLE pre_deleteds;
 TRUNCATE TABLE pre_file_contents;
